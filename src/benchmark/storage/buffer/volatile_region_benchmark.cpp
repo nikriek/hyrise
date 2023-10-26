@@ -17,6 +17,9 @@ void BM_VolatileRegionPageMovement(benchmark::State& state) {
     mapped_region = VolatileRegion::create_mapped_region();
     volatile_region = std::make_unique<VolatileRegion>(
         size_type, mapped_region, mapped_region + VolatileRegion::DEFAULT_RESERVED_VIRTUAL_MEMORY / NUM_OPS);
+    for (auto page_index = uint64_t{0}; page_index < NUM_OPS; ++page_index) {
+      volatile_region->mbind_to_numa_node(PageID{size_type, page_index}, source_node);
+    }
     std::memset(mapped_region, 0x1, VolatileRegion::DEFAULT_RESERVED_VIRTUAL_MEMORY / NUM_OPS);
   }
 
