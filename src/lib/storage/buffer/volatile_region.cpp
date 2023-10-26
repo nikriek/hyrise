@@ -69,15 +69,26 @@ void VolatileRegion::mbind_to_numa_node(const PageID page_id, const NodeID targe
 #endif
 }
 
-void VolatileRegion::memcopy_page_to_numa_node(const PageID page_id, const NodeID target_memory_node) {
+std::unique_ptr<uint8_t[]> setup_intermediate_buffer() {
 #if HYRISE_NUMA_SUPPORT
   static const auto numa_node_count = numa_num_configured_nodes();
 #else
   static const auto numa_node_count = 1;
 #endif
+  const auto num_bytes = bytes_for_size_type(MAX_PAGE_SIZE_TYPE);
+  auto buffer = std::make_unique_for_overwrite<uint8_t[]>(numa_node_count * num_bytes);
+  for (auto numa_node = uint64_t{0}; numa_node < numa_node_count; ++numa_node) {
+#if HYRISE_NUMA_SUPPORT
+    numa_tonode_memory(numa_node * num_bytes, num_bytes, numa_node);
+#endif
+  }
+
+  return buffer;
+}
+
+void VolatileRegion::memcopy_page_to_numa_node(const PageID page_id, const NodeID target_memory_node) {
   // The intermediate buffer only exists during the lifetime of the current thread.
-  thread_local auto intermediate_buffer =
-      std::make_unique_for_overwrite<uint8_t[]>(numa_node_count * bytes_for_size_type(MAX_PAGE_SIZE_TYPE));
+  thread_local auto intermediate_buffer = setup_intermediate_buffer();
   const auto page_ptr = get_page(page_id);
   const auto target_buffer =
       intermediate_buffer.get() + static_cast<uint64_t>(target_memory_node) * bytes_for_size_type(MAX_PAGE_SIZE_TYPE);
