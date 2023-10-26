@@ -50,21 +50,18 @@ void BM_VolatileRegionPageMovement(benchmark::State& state) {
 }
 
 BENCHMARK(BM_VolatileRegionPageMovement<&VolatileRegion::mbind_to_numa_node, NodeID{0}, NodeID{1}>)
-    ->ArgsProduct({benchmark::CreateDenseRange(static_cast<uint64_t>(0), static_cast<u_int64_t>(9), /*step=*/1)})
     ->DenseThreadRange(1, 48, 2)
     ->Iterations(1)
     ->Name("VolatileRegion/mbind")
     ->UseRealTime();
 
 BENCHMARK(BM_VolatileRegionPageMovement<&VolatileRegion::move_page_to_numa_node, NodeID{0}, NodeID{1}>)
-    ->ArgsProduct({benchmark::CreateDenseRange(static_cast<uint64_t>(0), static_cast<u_int64_t>(9), /*step=*/1)})
     ->DenseThreadRange(1, 48, 2)
     ->Iterations(1)
     ->Name("VolatileRegion/move_pages")
     ->UseRealTime();
 
 BENCHMARK(BM_VolatileRegionPageMovement<&VolatileRegion::memcopy_page_to_numa_node, NodeID{0}, NodeID{1}>)
-    ->ArgsProduct({benchmark::CreateDenseRange(static_cast<uint64_t>(0), static_cast<u_int64_t>(9), /*step=*/1)})
     ->DenseThreadRange(1, 48, 2)
     ->Iterations(1)
     ->Name("VolatileRegion/memcpy")
