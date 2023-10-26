@@ -30,22 +30,25 @@ class VolatileRegion final : public Noncopyable {
   VolatileRegion(const PageSizeType size_type, std::byte* region_start, std::byte* region_end);
 
   // Get the frame of a given page
-  Frame* get_frame(PageID page_id);
+  Frame* get_frame(const PageID page_id);
 
   // Get the start address of a given page
-  std::byte* get_page(PageID page_id);
+  std::byte* get_page(const PageID page_id);
 
   // Use mbind for page movement. This is not portable and only works on Linux with NUMA support.
-  void mbind_to_numa_node(PageID page_id, const NodeID target_memory_node);
+  void mbind_to_numa_node(const PageID page_id, const NodeID target_memory_node);
 
   // Use move_pages for page movement. This is not portable and only works on Linux with NUMA support.
-  void move_page_to_numa_node(PageID page_id, const NodeID target_memory_node);
+  void move_page_to_numa_node(const PageID page_id, const NodeID target_memory_node);
+
+  // Use double memcpy with intermediate buffer for page movement.
+  void memcopy_page_to_numa_node(const PageID page_id, const NodeID target_memory_node);
 
   // Free a page using madvise(MAV_FREE_REUSABLE) on OS X and madvise(MADV_DONTNEED) on Linux
-  void free(PageID page_id);
+  void free(const PageID page_id);
 
   // Mark a page as reusable using madvise(MADV_FREE_REUSE) on OS X to update memory accounting. Not implemented on Linux.
-  void reuse(PageID page_id);
+  void reuse(const PageID page_id);
 
   // Returns the number of pages this region can manage
   size_t size() const;
@@ -69,7 +72,7 @@ class VolatileRegion final : public Noncopyable {
   static void unmap_region(std::byte* region);
 
   // Create a VolatileRegion for each size type from the fixed-sized memory region
-  static std::array<std::shared_ptr<VolatileRegion>, NUM_PAGE_SIZE_TYPES> create_volatile_regions(
+  static std::array<std::shared_ptr<VolatileRegion>, PAGE_SIZE_TYPES_COUNT> create_volatile_regions(
       std::byte* mapped_region);
 
   // Returns the number of madvice(MADV_FREE_REUSABLE) calls on OS X or madvice(MADV_DONTNEED) calls on Linux

@@ -1,6 +1,7 @@
 #include "volatile_region.hpp"
 #include <sys/mman.h>
 #include <unistd.h>
+#include <memory>
 #include "utils/assert.hpp"
 
 #if HYRISE_NUMA_SUPPORT
@@ -25,7 +26,7 @@ VolatileRegion::VolatileRegion(const PageSizeType size_type, std::byte* region_s
   }
 }
 
-void VolatileRegion::move_page_to_numa_node(PageID page_id, const NodeID target_memory_node) {
+void VolatileRegion::move_page_to_numa_node(const PageID page_id, const NodeID target_memory_node) {
   DebugAssert(page_id.size_type() == _size_type, "Page does not belong to this region.");
 #if HYRISE_NUMA_SUPPORT
   DebugAssert(target_memory_node != INVALID_NODE_ID, "Numa node has not been set.");
@@ -46,7 +47,7 @@ void VolatileRegion::move_page_to_numa_node(PageID page_id, const NodeID target_
 #endif
 }
 
-void VolatileRegion::mbind_to_numa_node(PageID page_id, const NodeID target_memory_node) {
+void VolatileRegion::mbind_to_numa_node(const PageID page_id, const NodeID target_memory_node) {
   DebugAssert(page_id.size_type() == _size_type, "Page does not belong to this region.");
 
 #if HYRISE_NUMA_SUPPORT
@@ -68,7 +69,21 @@ void VolatileRegion::mbind_to_numa_node(PageID page_id, const NodeID target_memo
 #endif
 }
 
-void VolatileRegion::free(PageID page_id) {
+void VolatileRegion::memcopy_page_to_numa_node(const PageID page_id, const NodeID target_memory_node) {
+  // The intermedite buffer only exists during the lifetime of the current thread.
+  constexpr auto num_numa_nodes = 4;  // TODO
+  thread_local auto intermediate_buffer =
+      std::make_unique_for_overwrite<uint8_t[]>(num_numa_nodes * bytes_for_size_type(MAX_PAGE_SIZE_TYPE));
+  const auto page_ptr = get_page(page_id);
+  const auto target_buffer =
+      intermediate_buffer.get() + static_cast<uint64_t>(target_memory_node) * bytes_for_size_type(MAX_PAGE_SIZE_TYPE);
+  std::memcpy(target_buffer, page_ptr, page_id.byte_count());
+  free(page_id);
+  mbind_to_numa_node(page_id, target_memory_node);
+  std::memcpy(page_ptr, target_buffer, page_id.byte_count());
+}
+
+void VolatileRegion::free(const PageID page_id) {
   DebugAssert(page_id.size_type() == _size_type, "Page does not belong to this region.");
   // Use MADV_FREE_REUSABLE on OS X and MADV_DONTNEED on Linux
   // https://bugs.chromium.org/p/chromium/issues/detail?id=823915
@@ -79,7 +94,7 @@ void VolatileRegion::free(PageID page_id) {
 #endif
   auto ptr = get_page(page_id);
   _unprotect_page(page_id);
-  if (madvise(ptr, page_id.num_bytes(), flags) < 0) {
+  if (madvise(ptr, page_id.byte_count(), flags) < 0) {
     const auto error = errno;
     Fail("Failed to call madvise(MADV_DONTNEED / MADV_FREE_REUSABLE): " + strerror(error));
   }
@@ -87,16 +102,16 @@ void VolatileRegion::free(PageID page_id) {
   _madvice_free_call_count.fetch_add(1, std::memory_order_relaxed);
 }
 
-std::byte* VolatileRegion::get_page(PageID page_id) {
+std::byte* VolatileRegion::get_page(const PageID page_id) {
   DebugAssert(page_id.size_type() == _size_type, "Page does not belong to this region.");
   const auto num_bytes = bytes_for_size_type(_size_type);
-  const auto data = _region_start + page_id.index * num_bytes;
+  const auto data = _region_start + page_id.index() * num_bytes;
   return data;
 }
 
 Frame* VolatileRegion::get_frame(const PageID page_id) {
   DebugAssert(page_id.size_type() == _size_type, "Page does not belong to this region.");
-  return &_frames[page_id.index];
+  return &_frames[page_id.index()];
 }
 
 size_t VolatileRegion::memory_consumption() const {
@@ -111,12 +126,12 @@ PageSizeType VolatileRegion::size_type() const {
   return _size_type;
 }
 
-void VolatileRegion::reuse(PageID page_id) {
+void VolatileRegion::reuse(const PageID page_id) {
 // On OS X, we can use MADV_FREE_REUSE to update the memory accounting.
 // Source: https://bugs.chromium.org/p/chromium/issues/detail?id=823915
 #ifdef __APPLE__
   const auto ptr = get_page(page_id);
-  if (madvise(ptr, page_id.num_bytes(), MADV_FREE_REUSE) < 0) {
+  if (madvise(ptr, page_id.byte_count(), MADV_FREE_REUSE) < 0) {
     const auto error = errno;
     Fail("Failed to call madvise(MADV_FREE_REUSE): " + strerror(error));
   }
@@ -127,7 +142,7 @@ void VolatileRegion::_protect_page(const PageID page_id) {
   if constexpr (ENABLE_MPROTECT) {
     DebugAssert(page_id.size_type() == _size_type, "Page does not belong to this region.");
     auto data = get_page(page_id);
-    if (mprotect(data, page_id.num_bytes(), PROT_NONE) != 0) {
+    if (mprotect(data, page_id.byte_count(), PROT_NONE) != 0) {
       const auto error = errno;
       Fail("Failed to mprotect: " + strerror(error));
     }
@@ -138,7 +153,7 @@ void VolatileRegion::_unprotect_page(const PageID page_id) {
   if constexpr (ENABLE_MPROTECT) {
     DebugAssert(page_id.size_type() == _size_type, "Page does not belong to this region.");
     auto data = get_page(page_id);
-    if (mprotect(data, page_id.num_bytes(), PROT_READ | PROT_WRITE) != 0) {
+    if (mprotect(data, page_id.byte_count(), PROT_READ | PROT_WRITE) != 0) {
       const auto error = errno;
       Fail("Failed to mprotect: " + strerror(error));
     }
@@ -150,8 +165,8 @@ inline std::size_t get_os_page_size() {
 }
 
 constexpr size_t DEFAULT_RESERVED_VIRTUAL_MEMORY_PER_REGION =
-    (VolatileRegion::DEFAULT_RESERVED_VIRTUAL_MEMORY / NUM_PAGE_SIZE_TYPES) / bytes_for_size_type(MAX_PAGE_SIZE_TYPE) *
-    bytes_for_size_type(MAX_PAGE_SIZE_TYPE);
+    (VolatileRegion::DEFAULT_RESERVED_VIRTUAL_MEMORY / PAGE_SIZE_TYPES_COUNT) /
+    bytes_for_size_type(MAX_PAGE_SIZE_TYPE) * bytes_for_size_type(MAX_PAGE_SIZE_TYPE);
 
 std::byte* VolatileRegion::create_mapped_region() {
   Assert(bytes_for_size_type(MIN_PAGE_SIZE_TYPE) >= get_os_page_size(),
@@ -172,14 +187,14 @@ std::byte* VolatileRegion::create_mapped_region() {
   return mapped_memory;
 }
 
-std::array<std::shared_ptr<VolatileRegion>, NUM_PAGE_SIZE_TYPES> VolatileRegion::create_volatile_regions(
+std::array<std::shared_ptr<VolatileRegion>, PAGE_SIZE_TYPES_COUNT> VolatileRegion::create_volatile_regions(
     std::byte* mapped_region) {
   DebugAssert(mapped_region != nullptr, "Region not properly mapped");
-  auto array = std::array<std::shared_ptr<VolatileRegion>, NUM_PAGE_SIZE_TYPES>{};
+  auto array = std::array<std::shared_ptr<VolatileRegion>, PAGE_SIZE_TYPES_COUNT>{};
 
   // Ensure that every region has the same amount of virtual memory
   // Round to the next multiple of the largest page size
-  for (auto i = size_t{0}; i < NUM_PAGE_SIZE_TYPES; i++) {
+  for (auto i = size_t{0}; i < PAGE_SIZE_TYPES_COUNT; i++) {
     array[i] = std::make_shared<VolatileRegion>(magic_enum::enum_value<PageSizeType>(i),
                                                 mapped_region + DEFAULT_RESERVED_VIRTUAL_MEMORY_PER_REGION * i,
                                                 mapped_region + DEFAULT_RESERVED_VIRTUAL_MEMORY_PER_REGION * (i + 1));
