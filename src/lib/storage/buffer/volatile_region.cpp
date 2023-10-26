@@ -79,7 +79,7 @@ std::unique_ptr<uint8_t[]> setup_intermediate_buffer() {
   auto buffer = std::make_unique_for_overwrite<uint8_t[]>(numa_node_count * num_bytes);
   for (auto numa_node = uint64_t{0}; numa_node < numa_node_count; ++numa_node) {
 #if HYRISE_NUMA_SUPPORT
-    numa_tonode_memory(numa_node * num_bytes, num_bytes, numa_node);
+    numa_tonode_memory(buffer + numa_node * num_bytes, num_bytes, numa_node);
 #endif
   }
 
