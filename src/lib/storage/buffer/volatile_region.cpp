@@ -43,7 +43,7 @@ void VolatileRegion::move_page_to_numa_node(const PageID page_id, const NodeID t
     Fail("Move pages failed: " + strerror(error));
   }
   _numa_page_movement_count.fetch_add(1, std::memory_order_relaxed);
-  _frames[page_id.index].set_node_id(target_memory_node);
+  _frames[page_id.index()].set_node_id(target_memory_node);
 #endif
 }
 
@@ -65,7 +65,7 @@ void VolatileRegion::mbind_to_numa_node(const PageID page_id, const NodeID targe
   }
   numa_bitmask_free(nodes);
   _numa_page_movement_count.fetch_add(1, std::memory_order_relaxed);
-  _frames[page_id.index].set_node_id(target_memory_node);
+  _frames[page_id.index()].set_node_id(target_memory_node);
 #endif
 }
 
